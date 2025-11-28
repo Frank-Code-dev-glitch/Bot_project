@@ -6,7 +6,7 @@ import requests
 import logging
 from datetime import datetime
 
-# 🧹 Clear all proxy settings
+# 🧹 Clear all proxy settings``
 for var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
     os.environ.pop(var, None)
 
