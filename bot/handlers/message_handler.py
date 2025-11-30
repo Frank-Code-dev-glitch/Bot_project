@@ -219,7 +219,8 @@ class MessageHandler:
         try:
             # Check if this is a WhatsApp-style update
             if self._is_whatsapp_update(update):
-                self.handle_whatsapp_message(update['message'])
+                # For WhatsApp, we need to handle it asynchronously
+                asyncio.create_task(self.handle_whatsapp_message_async(update['message']))
                 return
                 
             logger.info(f"📨 Processing Telegram update: {update}")
@@ -233,8 +234,8 @@ class MessageHandler:
         except Exception as e:
             logger.error(f"❌ Error handling update: {e}")
 
-    def handle_whatsapp_message(self, message: Dict):
-        """Handle WhatsApp messages specifically"""
+    async def handle_whatsapp_message_async(self, message: Dict):
+        """Handle WhatsApp messages asynchronously"""
         try:
             chat_id = message['chat']['id']
             text = message.get('text', '').strip()
@@ -267,7 +268,7 @@ class MessageHandler:
             response = self.generate_cultural_response(chat_id, text)
             
             # Send response via WhatsApp
-            self.send_whatsapp_response(chat_id, response)
+            await self.send_whatsapp_response(chat_id, response)
             
             # Record conversation
             try:
@@ -878,12 +879,11 @@ Sun: 10am - 4pm
 
     # === WhatsApp Integration ===
     
-    def send_whatsapp_response(self, phone_number: str, response_text: str):
+    async def send_whatsapp_response(self, phone_number: str, response_text: str):
         """Send response via WhatsApp"""
         try:
             whatsapp = self._get_whatsapp_service()
-            # Run async function in sync context
-            asyncio.run(whatsapp.send_message(phone_number, response_text))
+            await whatsapp.send_message(phone_number, response_text)
             logger.info(f"✅ WhatsApp response sent to {phone_number}")
         except Exception as e:
             logger.error(f"❌ Error sending WhatsApp response: {e}")
@@ -907,9 +907,10 @@ Sun: 10am - 4pm
                         'from': {'id': user_id}
                     }
                 }
-                self.handle_update(update)
+                # Handle WhatsApp asynchronously
+                await self.handle_whatsapp_message_async(update['message'])
             else:
-                # Existing Telegram handling
+                # Existing Telegram handling (sync)
                 self.handle_update({
                     'message': {
                         'chat': {'id': user_id},
@@ -939,3 +940,42 @@ Sun: 10am - 4pm
                 
         except Exception as e:
             logger.error(f"❌ Error sending platform response: {e}")
+
+    # === Webhook Handler for WhatsApp ===
+    
+    async def handle_whatsapp_webhook(self, webhook_data: Dict) -> Dict:
+        """Handle WhatsApp webhook data directly"""
+        try:
+            logger.info(f"📱 Received WhatsApp webhook data: {webhook_data}")
+            
+            # Extract message from WhatsApp webhook format
+            entry = webhook_data.get('entry', [{}])[0]
+            changes = entry.get('changes', [{}])[0]
+            value = changes.get('value', {})
+            messages = value.get('messages', [])
+            
+            if not messages:
+                return {"status": "ignored", "reason": "No messages"}
+            
+            message = messages[0]
+            from_number = message.get('from')
+            text = message.get('text', {}).get('body', '')
+            
+            if not text:
+                return {"status": "ignored", "reason": "No text content"}
+            
+            # Create WhatsApp-style message format
+            whatsapp_message = {
+                'chat': {'id': from_number},
+                'text': text,
+                'from': {'id': from_number}
+            }
+            
+            # Process the message asynchronously
+            await self.handle_whatsapp_message_async(whatsapp_message)
+            
+            return {"status": "processed", "user": from_number, "message": text}
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling WhatsApp webhook: {e}")
+            return {"status": "error", "error": str(e)}
