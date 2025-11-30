@@ -1,7 +1,7 @@
-# salon_bot/urls.py - Updated
+# salon_bot/urls.py - CORRECTED
 from django.contrib import admin
 from django.urls import path, include
-from bot.views import WhatsAppWebhookView, HealthCheckView
+from bot.views import WhatsAppWebhookView, health_check  # ✅ Use function-based health_check
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -9,5 +9,5 @@ urlpatterns = [
     
     # WhatsApp Webhook endpoints
     path('webhook/whatsapp/', WhatsAppWebhookView.as_view(), name='whatsapp_webhook'),
-    path('health/', HealthCheckView.as_view(), name='health_check'),
+    path('health/', health_check, name='health_check'),  # ✅ Function-based, not class-based
 ]
