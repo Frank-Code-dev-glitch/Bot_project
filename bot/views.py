@@ -1,20 +1,138 @@
 # bot/views.py
 import json
 import logging
+import asyncio
+from threading import Thread
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.conf import settings
+from django.views import View
+from django.utils.decorators import method_decorator
 from bot.handlers.message_handler import MessageHandler
 from bot.handlers.payment_handler import PaymentHandler
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# BACKWARD COMPATIBILITY WRAPPERS (NEW)
+# =============================================================================
+
 @csrf_exempt
 @require_POST
 def webhook(request):
     """
+    ORIGINAL webhook endpoint - maintains backward compatibility
+    Now routes to telegram_webhook internally
+    """
+    logger.info("🔄 Routing legacy /webhook/ to telegram_webhook")
+    return telegram_webhook(request)
+
+@require_GET
+def set_webhook_view(request):
+    """
+    ORIGINAL set_webhook endpoint - maintains backward compatibility  
+    Now routes to set_telegram_webhook internally
+    """
+    logger.info("🔄 Routing legacy /set_webhook/ to set_telegram_webhook")
+    return set_telegram_webhook(request)
+
+@require_GET
+def delete_webhook_view(request):
+    """
+    ORIGINAL delete_webhook endpoint - maintains backward compatibility
+    Now routes to delete_telegram_webhook internally
+    """
+    logger.info("🔄 Routing legacy /delete_webhook/ to delete_telegram_webhook")
+    return delete_telegram_webhook(request)
+
+# =============================================================================
+# WhatsApp Webhook Views (NEW)
+# =============================================================================
+
+@method_decorator(csrf_exempt, name='dispatch')
+class WhatsAppWebhookView(View):
+    """WhatsApp Business API Webhook Handler"""
+    
+    def get(self, request):
+        """Webhook verification for WhatsApp"""
+        verify_token = request.GET.get('hub.verify_token')
+        challenge = request.GET.get('hub.challenge')
+        
+        expected_token = getattr(settings, 'WHATSAPP_VERIFY_TOKEN', '')
+        
+        if verify_token == expected_token:
+            logger.info("✅ WhatsApp webhook verified successfully")
+            return HttpResponse(challenge, status=200)
+        else:
+            logger.warning(f"❌ WhatsApp webhook verification failed. Expected: {expected_token}, Got: {verify_token}")
+            return HttpResponse('Verification failed', status=403)
+    
+    def post(self, request):
+        """Process incoming WhatsApp messages"""
+        try:
+            body = json.loads(request.body.decode('utf-8'))
+            logger.info(f"📱 Received WhatsApp webhook data: {json.dumps(body, indent=2)}")
+            
+            # Process in background thread to avoid timeout
+            Thread(target=self.process_whatsapp_message, args=(body,)).start()
+            return JsonResponse({'status': 'ok'})
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ WhatsApp webhook JSON decode error: {e}")
+            return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+        except Exception as e:
+            logger.error(f"❌ WhatsApp webhook error: {e}")
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+    
+    def process_whatsapp_message(self, data):
+        """Process WhatsApp message asynchronously"""
+        try:
+            # Extract message data from WhatsApp webhook format
+            entry = data.get('entry', [{}])[0]
+            changes = entry.get('changes', [{}])[0]
+            value = changes.get('value', {})
+            messages = value.get('messages', [])
+            
+            if not messages:
+                logger.info("ℹ️ WhatsApp webhook received without messages (could be status update)")
+                return
+            
+            message_data = messages[0]
+            user_phone = message_data.get('from')
+            message_text = message_data.get('text', {}).get('body', '')
+            
+            if not message_text:
+                logger.info("ℹ️ WhatsApp message without text content")
+                return
+            
+            logger.info(f"💬 Processing WhatsApp message from {user_phone}: {message_text}")
+            
+            # Convert to platform-agnostic format
+            user_data = {
+                'platform': 'whatsapp',
+                'user_id': user_phone,
+                'platform_user_id': f"whatsapp_{user_phone}",
+                'phone_number': user_phone
+            }
+            
+            # Route to message handler
+            handler = MessageHandler()
+            asyncio.run(handler.handle_platform_message(user_data, message_text))
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing WhatsApp message: {e}")
+
+# =============================================================================
+# Telegram Webhook Views (EXISTING - MODIFIED FOR HYBRID)
+# =============================================================================
+
+@csrf_exempt
+@require_POST
+def telegram_webhook(request):
+    """
     Main webhook endpoint that receives updates from Telegram
+    Now renamed to avoid conflict with WhatsApp webhook
     """
     try:
         # Parse the incoming update from Telegram
@@ -28,71 +146,76 @@ def webhook(request):
         return JsonResponse({'status': 'success'})
         
     except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON decode error: {e}")
+        logger.error(f"❌ Telegram webhook JSON decode error: {e}")
         return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
         
     except Exception as e:
-        logger.error(f"❌ Webhook error: {e}")
+        logger.error(f"❌ Telegram webhook error: {e}")
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
 @require_GET
-def set_webhook_view(request):
+def set_telegram_webhook(request):
     """
-    View to manually set the webhook
+    View to manually set the Telegram webhook
     """
     try:
         from bot.services.telegram_service import TelegramService
         telegram_service = TelegramService()
         result = telegram_service.set_webhook()
         
-        logger.info(f"🌐 Webhook set result: {result}")
+        logger.info(f"🌐 Telegram webhook set result: {result}")
         return JsonResponse({
             'status': 'success', 
-            'message': 'Webhook configured successfully',
+            'message': 'Telegram webhook configured successfully',
             'data': result
         })
         
     except Exception as e:
-        logger.error(f"❌ Set webhook error: {e}")
+        logger.error(f"❌ Set Telegram webhook error: {e}")
         return JsonResponse({
             'status': 'error', 
-            'message': f'Failed to set webhook: {str(e)}'
+            'message': f'Failed to set Telegram webhook: {str(e)}'
         }, status=500)
 
 @require_GET
-def delete_webhook_view(request):
+def delete_telegram_webhook(request):
     """
-    View to delete the webhook
+    View to delete the Telegram webhook
     """
     try:
         from bot.services.telegram_service import TelegramService
         telegram_service = TelegramService()
         result = telegram_service.delete_webhook()
         
-        logger.info(f"🌐 Webhook delete result: {result}")
+        logger.info(f"🌐 Telegram webhook delete result: {result}")
         return JsonResponse({
             'status': 'success', 
-            'message': 'Webhook deleted successfully',
+            'message': 'Telegram webhook deleted successfully',
             'data': result
         })
         
     except Exception as e:
-        logger.error(f"❌ Delete webhook error: {e}")
+        logger.error(f"❌ Delete Telegram webhook error: {e}")
         return JsonResponse({
             'status': 'error', 
-            'message': f'Failed to delete webhook: {str(e)}'
+            'message': f'Failed to delete Telegram webhook: {str(e)}'
         }, status=500)
+
+# =============================================================================
+# Hybrid Health Check & System Status (UPDATED)
+# =============================================================================
 
 @require_GET
 def health_check(request):
     """
-    Comprehensive health check endpoint
+    Comprehensive health check endpoint for hybrid bot
     """
     try:
         health_status = {
             'status': 'healthy', 
-            'service': 'Frank Beauty Salon Bot',
-            'version': '2.0',
+            'service': 'Frank Beauty Salon Bot - Hybrid',
+            'version': '3.0',
+            'platforms': ['telegram', 'whatsapp'],
             'components': {}
         }
         
@@ -115,6 +238,15 @@ def health_check(request):
         except Exception as e:
             health_status['components']['telegram_service'] = f'degraded: {str(e)}'
         
+        # Test WhatsApp service
+        try:
+            from bot.services.whatsapp_service import WhatsAppService
+            whatsapp = WhatsAppService()
+            health_status['components']['whatsapp_service'] = 'operational'
+            health_status['whatsapp_token_set'] = bool(whatsapp.access_token)
+        except Exception as e:
+            health_status['components']['whatsapp_service'] = f'degraded: {str(e)}'
+        
         # Test Message Handler
         try:
             handler = MessageHandler()
@@ -133,7 +265,7 @@ def health_check(request):
             health_status['components']['mpesa_service'] = f'degraded: {str(e)}'
         
         # Check if any critical components are degraded
-        critical_components = ['telegram_service', 'message_handler']
+        critical_components = ['telegram_service', 'message_handler', 'mpesa_service']
         degraded_components = [comp for comp, status in health_status['components'].items() 
                              if 'degraded' in status and comp in critical_components]
         
@@ -153,16 +285,18 @@ def health_check(request):
 @require_GET
 def test_bot(request):
     """
-    Comprehensive bot test endpoint
+    Comprehensive bot test endpoint for hybrid platform
     """
     try:
         from bot.services.huggingface_service import HuggingFaceService
         from bot.services.telegram_service import TelegramService
+        from bot.services.whatsapp_service import WhatsAppService
         from bot.services.mpesa_service import MpesaService
         
         test_results = {
             'status': 'online',
-            'service': 'Frank Beauty Salon Bot',
+            'service': 'Frank Beauty Salon Bot - Hybrid',
+            'platforms': ['telegram', 'whatsapp'],
             'tests': {}
         }
         
@@ -190,6 +324,20 @@ def test_bot(request):
             }
         except Exception as e:
             test_results['tests']['telegram_service'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+        
+        # Test WhatsApp Service
+        try:
+            whatsapp = WhatsAppService()
+            test_results['tests']['whatsapp_service'] = {
+                'status': 'passed',
+                'token_set': bool(whatsapp.access_token),
+                'business_number': getattr(whatsapp, 'business_number', 'Not set')
+            }
+        except Exception as e:
+            test_results['tests']['whatsapp_service'] = {
                 'status': 'failed',
                 'error': str(e)
             }
@@ -225,7 +373,10 @@ def test_bot(request):
             'message': f'Bot test failed: {str(e)}'
         }, status=500)
 
-# bot/views.py - Update the mpesa_callback function
+# =============================================================================
+# M-Pesa Payment Views (EXISTING - UNCHANGED)
+# =============================================================================
+
 @csrf_exempt
 @require_POST
 def mpesa_callback(request):
@@ -288,14 +439,12 @@ def mpesa_callback(request):
         })
 
 @require_GET
-def test_payment(request):
+def test_payment(request, phone_number, amount):
     """
-    Enhanced test payment endpoint with parameters
+    Enhanced test payment endpoint with parameters from URL
     """
     try:
-        # Get parameters from query string
-        phone_number = request.GET.get('phone', '254712345678')
-        amount = int(request.GET.get('amount', '1'))
+        # Get additional parameters from query string
         service_type = request.GET.get('service', 'haircut')
         
         from bot.services.mpesa_service import MpesaService
@@ -369,30 +518,36 @@ def payment_status(request):
             "message": f"Status check failed: {str(e)}"
         }, status=500)
 
+# =============================================================================
+# Service Information (UPDATED)
+# =============================================================================
+
 @require_GET
 def service_info(request):
     """
-    Service information and configuration endpoint
+    Service information and configuration endpoint for hybrid bot
     """
     config_info = {
-        "service": "Frank Beauty Salon Bot",
-        "version": "2.0",
+        "service": "Frank Beauty Salon Bot - Hybrid",
+        "version": "3.0",
+        "platforms": ["Telegram", "WhatsApp"],
         "features": [
-            "Telegram Bot Integration",
+            "Multi-Platform Bot Integration",
             "AI-Powered Responses", 
             "M-Pesa Payment Processing",
             "Appointment Booking",
             "Customer Memory System"
         ],
         "endpoints": {
-            "webhook": "/webhook/",
+            "telegram_webhook": "/webhook/telegram/",
+            "whatsapp_webhook": "/webhook/whatsapp/",
             "health_check": "/health/",
             "test_bot": "/test/",
             "mpesa_callback": "/mpesa_callback/",
             "test_payment": "/test_payment/",
             "payment_status": "/payment_status/",
-            "set_webhook": "/set_webhook/",
-            "delete_webhook": "/delete_webhook/"
+            "set_telegram_webhook": "/set_telegram_webhook/",
+            "delete_telegram_webhook": "/delete_telegram_webhook/"
         },
         "status": "operational"
     }
@@ -402,13 +557,14 @@ def service_info(request):
     config_info['configuration'] = {
         'debug_mode': getattr(settings, 'DEBUG', False),
         'mpesa_configured': bool(getattr(settings, 'MPESA_CONSUMER_KEY', None)),
+        'telegram_configured': bool(getattr(settings, 'TELEGRAM_BOT_TOKEN', None)),
+        'whatsapp_configured': bool(getattr(settings, 'WHATSAPP_ACCESS_TOKEN', None)),
         'webhook_url_set': bool(getattr(settings, 'WEBHOOK_URL', None)),
         'ai_service': 'HuggingFace'
     }
     
     return JsonResponse(config_info)
 
-# In views.py - add this endpoint for testing
 @require_GET
 def test_payment_flow(request):
     """Test payment flow directly"""

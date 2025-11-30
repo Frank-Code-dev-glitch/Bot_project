@@ -135,9 +135,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_DIRS = [
-    BASE_DIR / "static",
-]
+STATICFILES_DIRS = []
 
 # WhiteNoise configuration for static files
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
@@ -165,6 +163,10 @@ MPESA_CONSUMER_KEY = os.getenv('MPESA_CONSUMER_KEY', '')
 MPESA_CONSUMER_SECRET = os.getenv('MPESA_CONSUMER_SECRET', '')
 MPESA_SHORTCODE = os.getenv('MPESA_SHORTCODE', '174379')  # Default sandbox shortcode
 MPESA_PASSKEY = os.getenv('MPESA_PASSKEY', '')
+WHATSAPP_ACCESS_TOKEN = os.getenv('WHATSAPP_ACCESS_TOKEN', '')
+WHATSAPP_VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN', 'your_verify_token_here')
+WHATSAPP_BUSINESS_NUMBER = os.getenv('WHATSAPP_BUSINESS_NUMBER', '')
+WHATSAPP_API_VERSION = os.getenv('WHATSAPP_API_VERSION', 'v18.0')
 
 # M-Pesa Callback URL
 MPESA_CALLBACK_URL = os.environ.get('MPESA_CALLBACK_URL', '')

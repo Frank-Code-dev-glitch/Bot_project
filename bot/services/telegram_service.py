@@ -7,7 +7,18 @@ from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
-class TelegramService:
+# Add to bot/services/telegram_service.py
+class BaseMessageService:
+    """Base class for all platform message services"""
+    
+    async def send_message(self, user_id, message):
+        raise NotImplementedError
+    
+    async def send_quick_reply(self, user_id, message, options):
+        raise NotImplementedError
+    
+    
+class TelegramService(BaseMessageService):
     def __init__(self, token=None):
         self.token = token or os.getenv('TELEGRAM_TOKEN')
         if not self.token:

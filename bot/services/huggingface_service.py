@@ -1,29 +1,47 @@
 # bot/services/huggingface_service.py
 import logging
-import requests
 import random
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# Check if AI dependencies are available
+try:
+    import requests
+    AI_DEPENDENCIES_AVAILABLE = True
+except ImportError:
+    AI_DEPENDENCIES_AVAILABLE = False
+    logger.warning("⚠️ AI dependencies not available - running in fallback mode")
+
 class HuggingFaceService:
     def __init__(self):
         self.api_key = getattr(settings, 'HUGGINGFACE_API_KEY', '')
-        # Using a reliable model that's usually available
         self.api_url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-small"
+        
+        # Check if we can actually use AI services
+        self.ai_available = AI_DEPENDENCIES_AVAILABLE and bool(self.api_key)
+        
+        if not self.ai_available:
+            logger.info("🤖 Running in fallback mode - AI services not available")
     
     def generate_enhanced_response(self, user_message, customer_context=None, salon_context=None):
         """Enhanced response generation with context - COMPATIBILITY METHOD"""
-        # Your current service doesn't use context, so we'll just call the existing method
-        # This maintains compatibility with the message handler
-        logger.info(f"Enhanced response called - Customer context: {customer_context}, Salon context: {salon_context}")
+        logger.info(f"Enhanced response called - AI Available: {self.ai_available}")
+        
+        # If AI is not available, use intelligent fallback immediately
+        if not self.ai_available:
+            return self._get_intelligent_fallback(user_message)
         
         # For now, we'll ignore the context and use the existing response generation
-        # In the future, you could enhance the prompt with the context
         return self.generate_response(user_message)
         
     def generate_response(self, user_message, chat_history=None):
-        """Generate response using Hugging Face model"""
+        """Generate response using Hugging Face model or fallback"""
+        # If AI dependencies are missing, use fallback immediately
+        if not self.ai_available:
+            logger.info("🤖 Using fallback response (AI not available)")
+            return self._get_intelligent_fallback(user_message)
+        
         try:
             # If no API key, use fallback
             if not self.api_key:
@@ -44,7 +62,7 @@ class HuggingFaceService:
                 }
             }
             
-            logger.info(f"Sending request to Hugging Face API")
+            logger.info(f"🤖 Sending request to Hugging Face API")
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=10)
             
             # Handle different response scenarios
@@ -62,7 +80,7 @@ class HuggingFaceService:
             if isinstance(result, list) and len(result) > 0:
                 generated_text = result[0].get('generated_text', '').strip()
                 cleaned_response = self._clean_response(generated_text, user_message)
-                logger.info(f"AI Response: {cleaned_response}")
+                logger.info(f"🤖 AI Response: {cleaned_response}")
                 return cleaned_response
             else:
                 logger.warning("Unexpected API response format")
@@ -166,7 +184,7 @@ User: """
         
         elif any(word in message_lower for word in service_words):
             return random.choice([
-                "Tunfanya: Haircut & styling, Hair color, Treatment, Manicure, Pedicure, Facials, Makeup. Unataka kujua zaidi kuhusu gani?",
+                "Tunafanya: Haircut & styling, Hair color, Treatment, Manicure, Pedicure, Facials, Makeup. Unataka kujua zaidi kuhusu gani?",
                 "Services zetu: Everything hair, nails, facials, makeup! From basic cut to full glam. Service gani inakuvutia?",
                 "Huduma zetu: Hair services, nail care, facial treatments, makeup. Sema tu unataka nini, nikusaidie!"
             ])
@@ -179,10 +197,10 @@ User: """
             ])
         
         elif any(word in message_lower for word in location_words):
-            return "Tuko  Moi Avenue veteran house room 401, Nairobi CBD. Open Mon-Fri 8am-7pm, Sat 9am-6pm. Karibu!"
+            return "Tuko Moi Avenue veteran house room 401, Nairobi CBD. Open Mon-Fri 8am-7pm, Sat 9am-6pm. Karibu!"
         
         elif any(word in message_lower for word in thank_words):
-            return "thanks sana! Karibu tena. Kama una swali lingine, sema tu! 😊"
+            return "Asante sana! Karibu tena. Kama una swali lingine, sema tu! 😊"
         
         else:
             return random.choice([
@@ -190,3 +208,21 @@ User: """
                 "Pole, sijaelewa vizuri. Unaweza sema tena? Au unauliza kuhusu appointment, prices, au services?",
                 "Niko hapa kukuhelp! Sema tu kama unataka appointment, prices, au kujua services zetu."
             ])
+    
+    def get_service_status(self):
+        """Get the status of the AI service"""
+        status_info = {
+            'ai_dependencies_available': AI_DEPENDENCIES_AVAILABLE,
+            'api_key_configured': bool(self.api_key),
+            'service_available': self.ai_available,
+            'mode': 'AI' if self.ai_available else 'Fallback'
+        }
+        
+        if not AI_DEPENDENCIES_AVAILABLE:
+            status_info['message'] = 'AI dependencies not installed - running in fallback mode'
+        elif not self.api_key:
+            status_info['message'] = 'HuggingFace API key not configured - running in fallback mode'
+        else:
+            status_info['message'] = 'AI service ready'
+            
+        return status_info
