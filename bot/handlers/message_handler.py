@@ -2,6 +2,7 @@
 import logging
 import re
 import random
+import asyncio
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class MessageHandler:
         self.knowledge = None
         self.telegram = None
         self.payment_handler = None
+        self.whatsapp_service = None
         
         # Language and cultural responses
         self.language_styles = {
@@ -109,6 +111,12 @@ class MessageHandler:
             from bot.handlers.payment_handler import PaymentHandler
             self.payment_handler = PaymentHandler()
         return self.payment_handler
+    
+    def _get_whatsapp_service(self):
+        if self.whatsapp_service is None:
+            from bot.services.whatsapp_service import WhatsAppService
+            self.whatsapp_service = WhatsAppService()
+        return self.whatsapp_service
     
     def _get_conversation_states(self):
         """Get conversation state functions with fallback"""
@@ -283,7 +291,23 @@ class MessageHandler:
                 except Exception as e:
                     logger.error(f"Error recording conversation: {e}")
                 
-                telegram.send_message(chat_id, response)
+                # Check if this is a WhatsApp message (phone number format)
+                if isinstance(chat_id, str) and chat_id.startswith('254'):
+                    # Send response via WhatsApp
+                    self.send_whatsapp_response(chat_id, response)
+                else:
+                    # Send response via Telegram
+                    telegram.send_message(chat_id, response)
+
+    def send_whatsapp_response(self, phone_number, response_text):
+        """Send response via WhatsApp"""
+        try:
+            whatsapp = self._get_whatsapp_service()
+            # Run async function in sync context
+            asyncio.run(whatsapp.send_message(phone_number, response_text))
+            logger.info(f"✅ WhatsApp response sent to {phone_number}")
+        except Exception as e:
+            logger.error(f"❌ Error sending WhatsApp response: {e}")
 
     def generate_cultural_response(self, chat_id, user_message):
         """Generate response using Kenyan cultural context"""
@@ -558,7 +582,6 @@ Sun: 10am - 4pm
 
     # ... (keep all your existing handle_payment_message, handle_callback, 
     # handle_appointment_conversation, continue_appointment_flow methods as they are)
-    # They will automatically use the new language system through get_response()
 
     def is_appointment_intent(self, text):
         """Detect if user wants to book an appointment"""
@@ -571,7 +594,6 @@ Sun: 10am - 4pm
         text_lower = text.lower()
         return any(keyword in text_lower for keyword in appointment_keywords)
 
-    # ... (keep all your existing platform methods from the previous version)
     async def handle_platform_message(self, user_data, message_text):
         """Handle messages from any platform"""
         try:
