@@ -16,6 +16,8 @@ class ConversationState:
     AWAITING_PAYMENT = "awaiting_payment"
     CHOOSING_LANGUAGE = "choosing_language"
     AWAITING_PHONE = "awaiting_phone"
+    AWAITING_SERVICE = "awaiting_service"
+    AWAITING_TIME = "awaiting_time"
 
 class MessageHandler:
     """
@@ -46,7 +48,8 @@ class MessageHandler:
                 'confirmation': "Poa! Tumeconfirm appointment yako. Tutakuona kwa salon! 🔥",
                 'payment': "To lock your slot, tafadhali lipa KSh {amount} through M-Pesa. Simple!",
                 'thanks': "Asante mzee! Uko solid. Karibu tena anytime! 🙌",
-                'payment_prompt': "Tafadhali tuma namba yako ya simu kwa M-Pesa payment..."
+                'payment_prompt': "Tafadhali tuma namba yako ya simu kwa M-Pesa payment...",
+                'time_question': "Sawa! {service} it is! 💅\n\nWhen unataka kuingia? (e.g., 'kesho 2pm', 'Friday morning')"
             },
             'swenglish': {
                 'greeting': [
@@ -59,7 +62,8 @@ class MessageHandler:
                 'confirmation': "Perfect! Tumeconfirm your appointment. Tutakuona on the scheduled date! ✅",
                 'payment': "Tafadhali make payment of KSh {amount} through M-Pesa to secure your booking.",
                 'thanks': "Asante sana for choosing us! We look forward to serving you. 🎉",
-                'payment_prompt': "Tafadhali provide your phone number for M-Pesa payment..."
+                'payment_prompt': "Tafadhali provide your phone number for M-Pesa payment...",
+                'time_question': "Nice! {service} it is! 💅\n\nWhen would you like to come? (e.g., 'tomorrow 2pm', 'Friday morning')"
             },
             'english': {
                 'greeting': [
@@ -72,16 +76,17 @@ class MessageHandler:
                 'confirmation': "Excellent! Your appointment has been confirmed. We'll see you then! ✅",
                 'payment': "Please complete your payment of KSh {amount} via M-Pesa to secure your appointment.",
                 'thanks': "Thank you for choosing Frank Beauty Salon! We appreciate your business. 🎉",
-                'payment_prompt': "Please provide your phone number for M-Pesa payment..."
+                'payment_prompt': "Please provide your phone number for M-Pesa payment...",
+                'time_question': "Great choice! {service} it is! 💅\n\nWhen would you like to come? (e.g., 'tomorrow 2pm', 'Friday morning')"
             }
         }
         
         self.service_mapping = {
-            'hair': ['hair', 'nywele', 'cut', 'trim', 'style', 'blow', 'braid', 'weave'],
-            'nails': ['nail', 'manicure', 'pedicure', 'kucha', 'polish', 'gel'],
-            'face': ['facial', 'face', 'uso', 'skin', 'cleanse', 'treatment'],
-            'makeup': ['makeup', 'beat', 'glam', 'foundation', 'lipstick', 'eye'],
-            'massage': ['massage', 'massaji', 'relax', 'spa', 'therapy']
+            'hair': ['hair', 'nywele', 'cut', 'trim', 'style', 'blow', 'braid', 'weave', 'haircut', 'styling', 'blowout'],
+            'nails': ['nail', 'manicure', 'pedicure', 'kucha', 'polish', 'gel', 'nails', 'manicure', 'pedicure'],
+            'face': ['facial', 'face', 'uso', 'skin', 'cleanse', 'treatment', 'facial', 'skincare'],
+            'makeup': ['makeup', 'beat', 'glam', 'foundation', 'lipstick', 'eye', 'make up', 'make-up', 'bridal'],
+            'massage': ['massage', 'massaji', 'relax', 'spa', 'therapy', 'body massage']
         }
         
         self.service_prices = {
@@ -223,14 +228,14 @@ class MessageHandler:
                 asyncio.create_task(self.handle_whatsapp_message_async(update['message']))
                 return
                 
-            logger.info(f"📨 Processing Telegram update: {update}")
+            logger.info(f"📨 Processing Telegram update")
             
             if 'message' in update:
                 self.handle_message(update['message'])
             elif 'callback_query' in update:
                 self.handle_callback(update['callback_query'])
             else:
-                logger.warning(f"Unhandled update type: {update}")
+                logger.warning(f"Unhandled update type")
         except Exception as e:
             logger.error(f"❌ Error handling update: {e}")
 
@@ -250,6 +255,10 @@ class MessageHandler:
                 get_user_language, set_user_language
             ) = self._get_conversation_states()
             
+            # DEBUG: Log current state
+            current_state = get_user_state(chat_id)
+            logger.info(f"🔍 DEBUG: User {chat_id} state: {current_state}")
+            
             # Detect and set language preference
             current_language = get_user_language(chat_id)
             if not current_language or get_user_state(chat_id) == ConversationState.IDLE:
@@ -264,8 +273,8 @@ class MessageHandler:
             except Exception as e:
                 logger.error(f"Error remembering customer: {e}")
             
-            # Generate response
-            response = self.generate_cultural_response(chat_id, text)
+            # Process the message based on current state
+            response = await self._process_message_based_on_state(chat_id, text, current_state)
             
             # Send response via WhatsApp
             await self.send_whatsapp_response(chat_id, response)
@@ -279,6 +288,75 @@ class MessageHandler:
                 
         except Exception as e:
             logger.error(f"❌ Error handling WhatsApp message: {e}")
+
+    async def _process_message_based_on_state(self, chat_id: str, text: str, current_state: str) -> str:
+        """Process message based on current conversation state"""
+        (
+            get_user_state, set_user_state, clear_user_state,
+            get_appointment_data, set_appointment_data, clear_appointment_data,
+            get_conversation_context, set_conversation_context,
+            get_user_language, set_user_language
+        ) = self._get_conversation_states()
+        
+        if current_state == ConversationState.CHOOSING_LANGUAGE:
+            # Handle language selection in a way that returns response
+            return await self._handle_language_selection_response(chat_id, text)
+        
+        elif current_state == ConversationState.AWAITING_PHONE:
+            # Handle payment - this will send its own messages
+            self.handle_payment_message(chat_id, text)
+            return "Processing your payment information..."
+        
+        elif current_state in [ConversationState.APPOINTMENT_IN_PROGRESS, 
+                              ConversationState.AWAITING_SERVICE,
+                              ConversationState.AWAITING_TIME,
+                              ConversationState.AWAITING_CONFIRMATION]:
+            # Handle appointment conversation - this will send its own messages
+            self.handle_appointment_conversation(chat_id, text, current_state)
+            return "Processing your appointment..."
+        
+        elif text.startswith('/'):
+            # Handle commands
+            command_handler = self._get_command_handler()
+            command_handler.handle_command(chat_id, text)
+            return "Processing command..."
+        
+        else:
+            # Handle natural language
+            if self.is_appointment_intent(text):
+                self.start_natural_appointment(chat_id, text)
+                return "Starting appointment booking..."
+            elif self.is_language_switch_request(text):
+                self.offer_language_options(chat_id)
+                return "Please choose your language preference..."
+            else:
+                return self.generate_cultural_response(chat_id, text)
+
+    async def _handle_language_selection_response(self, chat_id: str, text: str) -> str:
+        """Handle language selection and return appropriate response"""
+        (
+            get_user_state, set_user_state, clear_user_state,
+            get_appointment_data, set_appointment_data, clear_appointment_data,
+            get_conversation_context, set_conversation_context,
+            get_user_language, set_user_language
+        ) = self._get_conversation_states()
+        
+        text_lower = text.lower()
+        
+        if 'sheng' in text_lower or 'informal' in text_lower:
+            set_user_language(chat_id, 'sheng')
+            set_user_state(chat_id, ConversationState.IDLE)
+            return "Poa msee! 😎 Sasa tuko on the same page. Unataka nini?"
+        elif 'english' in text_lower or 'formal' in text_lower:
+            set_user_language(chat_id, 'english')
+            set_user_state(chat_id, ConversationState.IDLE)
+            return "Perfect! I'll use English. How may I assist you today?"
+        elif 'swenglish' in text_lower or 'swahili' in text_lower:
+            set_user_language(chat_id, 'swenglish')
+            set_user_state(chat_id, ConversationState.IDLE)
+            return "Sawa! Tutazungumza Swenglish. Unataka nini? 😊"
+        else:
+            return "Please choose: Sheng, Swenglish, or English"
 
     def handle_message(self, message: Dict):
         """Handle incoming Telegram messages"""
@@ -298,6 +376,10 @@ class MessageHandler:
             get_conversation_context, set_conversation_context,
             get_user_language, set_user_language
         ) = self._get_conversation_states()
+        
+        # DEBUG: Log current state
+        current_state = get_user_state(chat_id)
+        logger.info(f"🔍 DEBUG: User {chat_id} state: {current_state}")
         
         # Detect and set language preference on first message
         current_language = get_user_language(chat_id)
@@ -618,21 +700,24 @@ Sun: 10am - 4pm
         
         set_user_state(chat_id, ConversationState.IDLE)
 
-    # === Appointment Handling ===
+    # === Appointment Handling - IMPROVED ===
     
     def is_appointment_intent(self, text: str) -> bool:
-        """Detect if user wants to book an appointment"""
+        """Detect if user wants to book an appointment - IMPROVED"""
+        text_lower = text.lower()
+        
         appointment_keywords = [
             'book', 'appointment', 'schedule', 'reserve', 'miadi',
             'come in', 'visit', 'see you', 'available', 'free',
-            'nikaweke', 'tengeneza', 'weka', 'ingia', 'nataka', 'I want',
-            'need', 'would like', 'napenda', 'reservation'
+            'nikaweke', 'tengeneza', 'weka', 'ingia', 'nataka', 'i want',
+            'need', 'would like', 'napenda', 'reservation', 'make appointment',
+            'set appointment', 'create appointment', 'new appointment', 'booking'
         ]
-        text_lower = text.lower()
+        
         return any(keyword in text_lower for keyword in appointment_keywords)
 
     def start_natural_appointment(self, chat_id: str, user_message: str):
-        """Start natural appointment conversation"""
+        """Start natural appointment conversation - IMPROVED"""
         try:
             (
                 get_user_state, set_user_state, clear_user_state,
@@ -644,33 +729,46 @@ Sun: 10am - 4pm
             # Extract service intent from message
             service_intent = self.extract_service_intent(user_message)
             
-            set_appointment_data(chat_id, {'service_intent': service_intent})
+            # Initialize appointment data
+            appointment_data = {
+                'service_intent': service_intent,
+                'step': 'service_selection'
+            }
+            
+            set_appointment_data(chat_id, appointment_data)
             set_user_state(chat_id, ConversationState.APPOINTMENT_IN_PROGRESS)
             
             telegram = self._get_telegram()
             
             if service_intent:
-                # If service is clear, ask for timing
-                response = self.get_response(chat_id, 'service_question')
-                telegram.send_message(chat_id, f"{response} (We got: {service_intent})")
+                # If service is clear, move to time selection
+                self._ask_for_appointment_time(chat_id, service_intent)
             else:
                 # Ask about service preference
                 telegram.send_message(chat_id, self.get_response(chat_id, 'service_question'))
+                set_user_state(chat_id, ConversationState.AWAITING_SERVICE)
+            
+            logger.info(f"🔍 DEBUG: Started appointment flow for {chat_id}, service_intent: {service_intent}")
             
         except Exception as e:
             logger.error(f"❌ Error starting natural appointment: {e}")
 
     def extract_service_intent(self, text: str) -> Optional[str]:
-        """Extract service intent from natural language"""
+        """Extract service intent from natural language - IMPROVED"""
         text_lower = text.lower()
         
+        # Expanded service mapping with better matching
         for service, keywords in self.service_mapping.items():
-            if any(keyword in text_lower for keyword in keywords):
-                return service
+            for keyword in keywords:
+                if keyword in text_lower:
+                    logger.info(f"🔍 DEBUG: Extracted service '{service}' from '{text}' using keyword '{keyword}'")
+                    return service
+        
+        logger.info(f"🔍 DEBUG: No service extracted from '{text}'")
         return None
 
     def handle_appointment_conversation(self, chat_id: str, text: str, user_state: str):
-        """Handle appointment conversation flow"""
+        """Handle appointment conversation flow - IMPROVED"""
         telegram = self._get_telegram()
         
         (
@@ -682,17 +780,24 @@ Sun: 10am - 4pm
         
         appointment_data = get_appointment_data(chat_id)
         
+        logger.info(f"🔍 DEBUG: Handling appointment conversation - state: {user_state}, data: {appointment_data}")
+        
         if user_state == ConversationState.APPOINTMENT_IN_PROGRESS:
             self.continue_appointment_flow(chat_id, text, appointment_data)
+        elif user_state == ConversationState.AWAITING_SERVICE:
+            self._handle_service_selection(chat_id, text)
+        elif user_state == ConversationState.AWAITING_TIME:
+            self._handle_time_selection(chat_id, text)
         elif user_state == ConversationState.AWAITING_CONFIRMATION:
             self.handle_confirmation(chat_id, text)
         else:
             # Fallback: reset conversation
+            logger.warning(f"🔍 DEBUG: Unknown state {user_state}, resetting conversation")
             set_user_state(chat_id, ConversationState.IDLE)
             telegram.send_message(chat_id, "Let's start over. How can I help you?")
 
-    def continue_appointment_flow(self, chat_id: str, text: str, appointment_data: Dict):
-        """Continue the appointment booking flow"""
+    def _handle_service_selection(self, chat_id: str, text: str):
+        """Handle service selection from user"""
         telegram = self._get_telegram()
         
         (
@@ -702,21 +807,46 @@ Sun: 10am - 4pm
             get_user_language, set_user_language
         ) = self._get_conversation_states()
         
-        # Extract service if not already set
-        if not appointment_data.get('service'):
-            service = self.extract_service_intent(text)
-            if service:
-                appointment_data['service'] = service
-                price = self.service_prices[service]['default']
-                appointment_data['price'] = price
-                
-                # Ask for preferred date/time
-                telegram.send_message(chat_id, f"Nice! {service.capitalize()} it is! 💅\n\nWhen would you like to come? (e.g., 'tomorrow 2pm', 'Friday morning')")
-                set_appointment_data(chat_id, appointment_data)
-            else:
-                telegram.send_message(chat_id, "I'm not sure which service you want. Please specify: hair, nails, facial, makeup, or massage?")
+        service = self.extract_service_intent(text)
+        
+        if service:
+            appointment_data = get_appointment_data(chat_id) or {}
+            appointment_data['service'] = service
+            appointment_data['price'] = self.service_prices[service]['default']
+            set_appointment_data(chat_id, appointment_data)
+            
+            self._ask_for_appointment_time(chat_id, service)
         else:
-            # Service is set, now get timing
+            telegram.send_message(chat_id, "I'm not sure which service you want. Please specify: hair, nails, facial, makeup, or massage?")
+
+    def _ask_for_appointment_time(self, chat_id: str, service: str):
+        """Ask user for appointment time"""
+        telegram = self._get_telegram()
+        
+        (
+            get_user_state, set_user_state, clear_user_state,
+            get_appointment_data, set_appointment_data, clear_appointment_data,
+            get_conversation_context, set_conversation_context,
+            get_user_language, set_user_language
+        ) = self._get_conversation_states()
+        
+        time_question = self.get_response(chat_id, 'time_question', service=service.capitalize())
+        telegram.send_message(chat_id, time_question)
+        set_user_state(chat_id, ConversationState.AWAITING_TIME)
+
+    def _handle_time_selection(self, chat_id: str, text: str):
+        """Handle time selection from user"""
+        telegram = self._get_telegram()
+        
+        (
+            get_user_state, set_user_state, clear_user_state,
+            get_appointment_data, set_appointment_data, clear_appointment_data,
+            get_conversation_context, set_conversation_context,
+            get_user_language, set_user_language
+        ) = self._get_conversation_states()
+        
+        appointment_data = get_appointment_data(chat_id)
+        if appointment_data:
             appointment_data['preferred_time'] = text
             set_appointment_data(chat_id, appointment_data)
             set_user_state(chat_id, ConversationState.AWAITING_CONFIRMATION)
@@ -736,8 +866,30 @@ Sun: 10am - 4pm
             """
             telegram.send_message(chat_id, confirmation_msg)
 
+    def continue_appointment_flow(self, chat_id: str, text: str, appointment_data: Dict):
+        """Continue the appointment booking flow - IMPROVED"""
+        # This method now handles the initial flow when service intent might be in the message
+        service = self.extract_service_intent(text)
+        
+        if service:
+            # If service is detected in this message, use it
+            appointment_data = appointment_data or {}
+            appointment_data['service'] = service
+            appointment_data['price'] = self.service_prices[service]['default']
+            self._ask_for_appointment_time(chat_id, service)
+        else:
+            # No service detected, ask for it specifically
+            self._get_telegram().send_message(chat_id, self.get_response(chat_id, 'service_question'))
+            (
+                get_user_state, set_user_state, clear_user_state,
+                get_appointment_data, set_appointment_data, clear_appointment_data,
+                get_conversation_context, set_conversation_context,
+                get_user_language, set_user_language
+            ) = self._get_conversation_states()
+            set_user_state(chat_id, ConversationState.AWAITING_SERVICE)
+
     def handle_confirmation(self, chat_id: str, text: str):
-        """Handle appointment confirmation"""
+        """Handle appointment confirmation - IMPROVED"""
         telegram = self._get_telegram()
         
         (
@@ -747,30 +899,40 @@ Sun: 10am - 4pm
             get_user_language, set_user_language
         ) = self._get_conversation_states()
         
-        if text.lower() in ['yes', 'y', 'sawa', 'ndio', 'confirm']:
+        text_lower = text.lower()
+        
+        if text_lower in ['yes', 'y', 'sawa', 'ndio', 'confirm', 'correct', 'ok', 'proceed']:
             appointment_data = get_appointment_data(chat_id)
-            service = appointment_data['service']
-            price = appointment_data['price']
-            
-            # Move to payment
-            set_user_state(chat_id, ConversationState.AWAITING_PHONE)
-            
-            payment_msg = f"""
+            if appointment_data:
+                service = appointment_data['service']
+                price = appointment_data['price']
+                
+                # Move to payment
+                set_user_state(chat_id, ConversationState.AWAITING_PHONE)
+                
+                payment_msg = f"""
 🎉 *Appointment Confirmed!*
 
 *Service:* {service.capitalize()}
-*Time:* {appointment_data['preferred_time']}
+*Time:* {appointment_data.get('preferred_time', 'To be confirmed')}
 *Amount:* KES {price}
 
 {self.get_response(chat_id, 'payment_prompt')}
-            """
-            telegram.send_message(chat_id, payment_msg)
-            
-        else:
+                """
+                telegram.send_message(chat_id, payment_msg)
+                
+                logger.info(f"🔍 DEBUG: Appointment confirmed for {chat_id}, moving to payment")
+            else:
+                telegram.send_message(chat_id, "Sorry, I lost track of your appointment. Let's start over.")
+                set_user_state(chat_id, ConversationState.IDLE)
+                
+        elif text_lower in ['no', 'n', 'hapana', 'change', 'cancel']:
             # Restart appointment process
             set_user_state(chat_id, ConversationState.IDLE)
             clear_appointment_data(chat_id)
             telegram.send_message(chat_id, "No problem! Let's start over. What service would you like?")
+        else:
+            telegram.send_message(chat_id, "Please reply 'yes' to confirm or 'no' to change your appointment.")
 
     def handle_payment_message(self, chat_id: str, text: str):
         """Handle payment information"""
@@ -872,10 +1034,7 @@ Sun: 10am - 4pm
         })
         set_user_state(chat_id, ConversationState.APPOINTMENT_IN_PROGRESS)
         
-        telegram.send_message(
-            chat_id, 
-            f"Great choice! {service.capitalize()} it is! 💅\n\nWhen would you like to come? (e.g., 'tomorrow 2pm', 'Friday morning')"
-        )
+        self._ask_for_appointment_time(chat_id, service)
 
     # === WhatsApp Integration ===
     
@@ -888,65 +1047,12 @@ Sun: 10am - 4pm
         except Exception as e:
             logger.error(f"❌ Error sending WhatsApp response: {e}")
 
-    # === Multi-Platform Support ===
-    
-    async def handle_platform_message(self, user_data: Dict, message_text: str):
-        """Handle messages from any platform"""
-        try:
-            platform = user_data.get('platform', 'telegram')
-            user_id = user_data['user_id']
-            
-            logger.info(f"🔄 Handling {platform} message from {user_id}: {message_text}")
-            
-            if platform == 'whatsapp':
-                # Convert to WhatsApp-style format
-                update = {
-                    'message': {
-                        'chat': {'id': user_id},
-                        'text': message_text,
-                        'from': {'id': user_id}
-                    }
-                }
-                # Handle WhatsApp asynchronously
-                await self.handle_whatsapp_message_async(update['message'])
-            else:
-                # Existing Telegram handling (sync)
-                self.handle_update({
-                    'message': {
-                        'chat': {'id': user_id},
-                        'text': message_text,
-                        'from': {'id': user_id}
-                    }
-                })
-                    
-        except Exception as e:
-            logger.error(f"❌ Error handling platform message: {e}")
-
-    async def send_platform_response(self, user_data: Dict, response_text: str, quick_replies=None):
-        """Send response through appropriate platform"""
-        try:
-            platform = user_data['platform']
-            user_id = user_data['user_id']
-            
-            if platform == 'whatsapp':
-                whatsapp = self._get_whatsapp_service()
-                if quick_replies:
-                    await whatsapp.send_quick_reply(user_id, response_text, quick_replies)
-                else:
-                    await whatsapp.send_message(user_id, response_text)
-            else:
-                telegram = self._get_telegram()
-                telegram.send_message(user_id, response_text)
-                
-        except Exception as e:
-            logger.error(f"❌ Error sending platform response: {e}")
-
     # === Webhook Handler for WhatsApp ===
     
     async def handle_whatsapp_webhook(self, webhook_data: Dict) -> Dict:
         """Handle WhatsApp webhook data directly"""
         try:
-            logger.info(f"📱 Received WhatsApp webhook data: {webhook_data}")
+            logger.info(f"📱 Received WhatsApp webhook data")
             
             # Extract message from WhatsApp webhook format
             entry = webhook_data.get('entry', [{}])[0]
