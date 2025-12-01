@@ -546,25 +546,137 @@ Reply *YES* to confirm or *NO* to cancel."""
 *Please make payment to secure your booking!* ✅"""
         return self.whatsapp.send_message(chat_id, message)
     
+    # ========== UPDATED SAVE APPOINTMENT METHOD ==========
+    
     def save_appointment(self, chat_id, appointment):
-        """Save appointment to database"""
+        """Save appointment to database with correct field names for your model"""
         try:
-            from bot.models import Appointment
+            from bot.models import Appointment, Customer
+            from datetime import datetime as dt
             
-            Appointment.objects.create(
-                customer_whatsapp=chat_id,
-                service_type=appointment.get('service', 'Haircut & Styling'),
-                appointment_date=appointment.get('date', datetime.now().date()),
-                appointment_time=appointment.get('time', '14:00'),
-                customer_name=appointment.get('customer_name', 'Customer'),
-                customer_phone=appointment.get('customer_phone', ''),
-                status='pending',
-                created_at=datetime.now()
+            logger.info(f"💾 Saving appointment for {chat_id}")
+            logger.info(f"📝 Appointment data: {appointment}")
+            
+            # 1. Get or create customer
+            customer, created = Customer.objects.get_or_create(
+                whatsapp_number=chat_id,
+                defaults={
+                    'name': appointment.get('customer_name', 'Customer'),
+                    'phone': appointment.get('customer_phone', ''),
+                    'platform': 'whatsapp'
+                }
             )
             
-            logger.info(f"Appointment saved for {chat_id}")
+            # Update customer info if not new
+            if not created:
+                if appointment.get('customer_name'):
+                    customer.name = appointment.get('customer_name')
+                if appointment.get('customer_phone'):
+                    customer.phone = appointment.get('customer_phone')
+                customer.save()
+            
+            logger.info(f"👤 Customer: {customer.name} (ID: {customer.id})")
+            
+            # 2. Parse date and time for scheduled_date
+            date_str = appointment.get('date', '')
+            time_str = appointment.get('time', '14:00')
+            
+            # Default to tomorrow 2 PM if no date specified
+            if not date_str or 'tomorrow' in date_str.lower():
+                date_obj = dt.now().date() + timedelta(days=1)
+            elif 'today' in date_str.lower():
+                date_obj = dt.now().date()
+            else:
+                try:
+                    date_obj = dt.strptime(date_str, '%Y-%m-%d').date()
+                except:
+                    date_obj = dt.now().date() + timedelta(days=1)
+            
+            # Parse time
+            try:
+                if ':' in time_str:
+                    # Already in HH:MM format
+                    if 'pm' in time_str.lower():
+                        # Handle "2:00 PM" format
+                        time_part = time_str.lower().replace('pm', '').strip()
+                        hour, minute = map(int, time_part.split(':'))
+                        if hour < 12:
+                            hour += 12
+                        time_obj = dt.strptime(f"{hour}:{minute:02d}", '%H:%M').time()
+                    elif 'am' in time_str.lower():
+                        # Handle "10:00 AM" format
+                        time_part = time_str.lower().replace('am', '').strip()
+                        hour, minute = map(int, time_part.split(':'))
+                        if hour == 12:
+                            hour = 0
+                        time_obj = dt.strptime(f"{hour}:{minute:02d}", '%H:%M').time()
+                    else:
+                        # Assume 24-hour format
+                        time_obj = dt.strptime(time_str, '%H:%M').time()
+                elif 'pm' in time_str.lower():
+                    # Handle "2 PM" format
+                    hour = int(time_str.lower().replace('pm', '').strip())
+                    if hour < 12:
+                        hour += 12
+                    time_obj = dt.strptime(f"{hour}:00", '%H:%M').time()
+                elif 'am' in time_str.lower():
+                    # Handle "10 AM" format
+                    hour = int(time_str.lower().replace('am', '').strip())
+                    if hour == 12:
+                        hour = 0
+                    time_obj = dt.strptime(f"{hour}:00", '%H:%M').time()
+                elif 'morning' in time_str.lower():
+                    time_obj = dt.strptime('09:00', '%H:%M').time()
+                elif 'afternoon' in time_str.lower():
+                    time_obj = dt.strptime('14:00', '%H:%M').time()
+                elif 'evening' in time_str.lower():
+                    time_obj = dt.strptime('17:00', '%H:%M').time()
+                else:
+                    # Default to 2 PM
+                    time_obj = dt.strptime('14:00', '%H:%M').time()
+            except Exception as e:
+                logger.warning(f"Could not parse time '{time_str}': {e}")
+                time_obj = dt.strptime('14:00', '%H:%M').time()
+            
+            # Combine into scheduled_date
+            scheduled_date = dt.combine(date_obj, time_obj)
+            
+            # 3. Determine amount based on service
+            service = appointment.get('service', 'Haircut & Styling')
+            amount = 0.00
+            if 'Haircut' in service:
+                amount = 500.00
+            elif 'Manicure' in service or 'Pedicure' in service:
+                amount = 600.00
+            elif 'Facial' in service:
+                amount = 1200.00
+            elif 'Makeup' in service:
+                amount = 1000.00
+            elif 'Coloring' in service:
+                amount = 1500.00
+            
+            # 4. Create appointment
+            appointment_obj = Appointment.objects.create(
+                platform='whatsapp',
+                customer=customer,
+                service_type=service,
+                scheduled_date=scheduled_date,
+                duration_minutes=60,  # Default 1 hour
+                status='pending',
+                payment_status='pending',
+                amount=amount,
+                amount_paid=0.00,
+            )
+            
+            logger.info(f"✅ Appointment #{appointment_obj.id} saved successfully!")
+            logger.info(f"   Service: {appointment_obj.service_type}")
+            logger.info(f"   Scheduled: {appointment_obj.scheduled_date}")
+            logger.info(f"   Amount: KES {appointment_obj.amount}")
+            
             return True
             
         except Exception as e:
-            logger.error(f"Error saving appointment: {e}")
+            logger.error(f"❌ Error saving appointment: {e}", exc_info=True)
+            import traceback
+            logger.error(traceback.format_exc())
             return False
