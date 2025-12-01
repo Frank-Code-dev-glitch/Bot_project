@@ -1,13 +1,16 @@
 # bot/handlers/whatsapp_conversation_handler.py
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
+
 from .conversation_states import (
     ConversationState,
     get_user_state, set_user_state,
     get_appointment_data, set_appointment_data,
     add_to_conversation_history, update_last_activity,
     is_user_viewing_services, set_user_viewing_services,
-    track_service_selection
+    track_service_selection,
+    is_recently_viewed_services  # NEW IMPORT
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,20 @@ class WhatsAppConversationHandler:
             # Get current state
             current_state = get_user_state(chat_id)
             logger.info(f"Current state for {chat_id}: {current_state}")
+            
+            # ========== THE FIX ==========
+            # Check if user recently viewed services and is now selecting one
+            if (current_state == ConversationState.IDLE and 
+                is_recently_viewed_services(chat_id) and
+                self._is_service_selection(text)):
+                
+                # User is selecting a service after seeing the list
+                service = self._extract_service(text)
+                if service:
+                    logger.info(f"🎯 User selecting service after viewing services: {service}")
+                    track_service_selection(chat_id, service)
+                    return self.start_booking_for_service(chat_id, service)
+            # ========== END FIX ==========
             
             # Handle based on state
             if current_state == ConversationState.IDLE:
@@ -83,8 +100,8 @@ class WhatsAppConversationHandler:
             return self.handle_booking_with_time(chat_id, text)
         
         # Service selection (might be direct)
-        elif self.is_service_selection(text_lower):
-            service = self.extract_service(text_lower)
+        elif self._is_service_selection(text_lower):
+            service = self._extract_service(text_lower)
             return self.start_booking_for_service(chat_id, service)
         
         # Default response
@@ -96,8 +113,8 @@ class WhatsAppConversationHandler:
         text_lower = text.lower()
         
         # Check if user is selecting a service
-        if self.is_service_selection(text_lower):
-            service = self.extract_service(text_lower)
+        if self._is_service_selection(text_lower):
+            service = self._extract_service(text_lower)
             track_service_selection(chat_id, service)
             return self.start_booking_for_service(chat_id, service)
         
@@ -129,7 +146,7 @@ class WhatsAppConversationHandler:
     def handle_booking_with_time(self, chat_id, text):
         """Handle booking request that includes time"""
         text_lower = text.lower()
-        service = self.extract_service(text_lower)
+        service = self._extract_service(text_lower)
         time_info = self.extract_time_info(text_lower)
         
         appointment = get_appointment_data(chat_id)
@@ -154,8 +171,8 @@ class WhatsAppConversationHandler:
         """Handle service selection step"""
         text_lower = text.lower()
         
-        if self.is_service_selection(text_lower):
-            service = self.extract_service(text_lower)
+        if self._is_service_selection(text_lower):
+            service = self._extract_service(text_lower)
             track_service_selection(chat_id, service)
             return self.start_booking_for_service(chat_id, service)
         else:
@@ -242,7 +259,39 @@ class WhatsAppConversationHandler:
             appointment = get_appointment_data(chat_id)
             return self.ask_for_confirmation_again(chat_id, appointment)
     
-    # Helper methods
+    # ========== HELPER METHODS ==========
+    
+    def _is_service_selection(self, text):
+        """Check if text contains a service selection"""
+        text_lower = text.lower()
+        
+        service_keywords = [
+            'haircut', 'styling', 'hair', 'cut',
+            'manicure', 'pedicure', 'nails',
+            'facial', 'face', 'skin',
+            'makeup', 'make up',
+            'coloring', 'colour', 'color'
+        ]
+        
+        return any(keyword in text_lower for keyword in service_keywords)
+    
+    def _extract_service(self, text):
+        """Extract service name from text"""
+        text_lower = text.lower()
+        
+        if 'hair' in text_lower or 'cut' in text_lower or 'styling' in text_lower:
+            return 'Haircut & Styling'
+        elif 'manicure' in text_lower or 'pedicure' in text_lower or 'nails' in text_lower:
+            return 'Manicure/Pedicure'
+        elif 'facial' in text_lower:
+            return 'Facial Treatment'
+        elif 'makeup' in text_lower:
+            return 'Makeup Services'
+        elif 'color' in text_lower or 'colour' in text_lower:
+            return 'Hair Coloring'
+        
+        return None
+    
     def is_booking_with_time(self, text):
         """Check if text contains booking with time"""
         time_words = ['tomorrow', 'today', 'morning', 'afternoon', 'evening', 'am', 'pm']
@@ -252,28 +301,6 @@ class WhatsAppConversationHandler:
         has_booking = any(word in text for word in booking_words)
         
         return has_time and has_booking
-    
-    def is_service_selection(self, text):
-        """Check if text contains service selection"""
-        service_keywords = ['haircut', 'styling', 'manicure', 'pedicure', 
-                          'facial', 'makeup', 'coloring', 'hair', 'nails']
-        return any(word in text for word in service_keywords)
-    
-    def extract_service(self, text):
-        """Extract service from text"""
-        if 'haircut' in text or 'hair cut' in text or 'styling' in text:
-            return 'Haircut & Styling'
-        elif 'manicure' in text or 'pedicure' in text or 'nails' in text:
-            return 'Manicure/Pedicure'
-        elif 'facial' in text:
-            return 'Facial Treatment'
-        elif 'makeup' in text or 'make up' in text:
-            return 'Makeup Services'
-        elif 'coloring' in text or 'colour' in text:
-            return 'Hair Coloring'
-        elif 'hair' in text:
-            return 'Haircut & Styling'
-        return None
     
     def extract_time_info(self, text):
         """Extract time information"""
@@ -290,7 +317,7 @@ class WhatsAppConversationHandler:
     def parse_date(self, text):
         """Parse date from text"""
         if 'tomorrow' in text:
-            tomorrow = datetime.now().date() + datetime.timedelta(days=1)
+            tomorrow = datetime.now().date() + timedelta(days=1)
             return tomorrow.strftime('%Y-%m-%d')
         elif 'today' in text:
             return datetime.now().date().strftime('%Y-%m-%d')
@@ -314,7 +341,8 @@ class WhatsAppConversationHandler:
         cleaned = re.sub(r'\D', '', text)
         return (len(cleaned) == 10 and cleaned.startswith('07')) or (len(cleaned) == 12 and cleaned.startswith('254'))
     
-    # Response methods
+    # ========== RESPONSE METHODS ==========
+    
     def send_greeting(self, chat_id):
         message = """Hello! Welcome to Frank Beauty Salon! 💇‍♀
 

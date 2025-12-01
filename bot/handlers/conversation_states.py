@@ -159,7 +159,10 @@ def set_user_viewing_services(chat_id, viewing=True):
     """Set user as viewing services"""
     if viewing:
         set_user_state(chat_id, ConversationState.VIEWING_SERVICES)
-    set_conversation_context(chat_id, {'last_topic': 'services'})
+    set_conversation_context(chat_id, {
+        'last_topic': 'services',
+        'services_viewed_at': datetime.now().isoformat()  # NEW: Track when services were viewed
+    })
 
 def track_service_selection(chat_id, service):
     """Track that user selected a service"""
@@ -172,6 +175,24 @@ def get_last_selected_service(chat_id):
     """Get last selected service by user"""
     ctx = get_conversation_context(chat_id)
     return ctx.get('selected_service')
+
+# ========== THE FIX ==========
+def is_recently_viewed_services(chat_id):
+    """Check if user recently viewed services (within last 2 minutes) - THE FIX"""
+    ctx = get_conversation_context(chat_id)
+    services_viewed_at = ctx.get('services_viewed_at')
+    
+    if not services_viewed_at:
+        return False
+    
+    try:
+        # Parse timestamp and check if within 2 minutes
+        viewed_time = datetime.fromisoformat(services_viewed_at)
+        time_diff = (datetime.now() - viewed_time).total_seconds()
+        return time_diff < 120  # 2 minutes
+    except:
+        return False
+# ========== END FIX ==========
 
 def get_next_required_field(chat_id):
     """Get the next required field for appointment booking"""
