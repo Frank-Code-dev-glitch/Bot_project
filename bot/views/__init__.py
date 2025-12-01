@@ -12,13 +12,21 @@ from .telegram_views import (
     test_payment_flow
 )
 
-from .whatsapp_views import (
-    whatsapp_webhook,
-    whatsapp_health_check,
-    WhatsAppWebhookView
-)
+# Import only what actually exists
+from .whatsapp_views import whatsapp_webhook
 
-# Export all views
+# Try to import optional functions
+try:
+    from .whatsapp_views import whatsapp_health_check
+except ImportError:
+    whatsapp_health_check = None
+
+try:
+    from .whatsapp_views import WhatsAppWebhookView
+except ImportError:
+    WhatsAppWebhookView = None
+
+# Export all views (only what exists)
 __all__ = [
     'telegram_webhook',
     'set_telegram_webhook',
@@ -31,6 +39,11 @@ __all__ = [
     'service_info',
     'test_payment_flow',
     'whatsapp_webhook',
-    'whatsapp_health_check',
-    'WhatsAppWebhookView'
 ]
+
+# Add optional imports only if they exist
+if whatsapp_health_check:
+    __all__.append('whatsapp_health_check')
+    
+if WhatsAppWebhookView:
+    __all__.append('WhatsAppWebhookView')

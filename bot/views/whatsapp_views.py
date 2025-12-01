@@ -63,3 +63,14 @@ def whatsapp_webhook(request):
         return JsonResponse({"error": "Verification failed"}, status=403)
     
     return JsonResponse({"error": "Method not allowed"}, status=405)
+
+def whatsapp_health_check(request):
+    """Health check endpoint for WhatsApp"""
+    from django.http import JsonResponse
+    from datetime import datetime
+    
+    return JsonResponse({
+        'status': 'ok',
+        'service': 'whatsapp_webhook',
+        'timestamp': datetime.now().isoformat()
+    })
