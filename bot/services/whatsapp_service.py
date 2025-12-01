@@ -22,7 +22,7 @@ class WhatsAppService:
         
         logger.info(f"📱 WhatsApp Service initialized for phone number ID: {self.phone_number_id}")
 
-    async def send_message(self, to_number: str, message_text: str) -> bool:
+    def send_message(self, to_number: str, message_text: str) -> bool:
         """Send WhatsApp message using the Graph API"""
         try:
             # Ensure number format is correct
